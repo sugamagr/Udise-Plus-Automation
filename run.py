@@ -14,12 +14,14 @@ from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
 os.environ["PYTHONUNBUFFERED"] = "1"
 from config import (
-    SCHOOL_ID, CLASSES_TO_PROCESS, SECTION_NUM,
-    FIELD_SELECTOR, FIELD_VALUE, FIELD_LABEL, SKIP_IF_ALREADY_SET,
+    CLASSES_TO_PROCESS, SECTION_NUM,
+    FIELD_SELECTOR, FIELD_VALUE, FIELD_LABEL, SKIP_IF_ALREADY_SET, ALWAYS_SAVE, ONLY_INCOMPLETE,
     PAGE_LOAD_DELAY, SAVE_DELAY, BETWEEN_STUDENTS_DELAY, BACK_NAV_DELAY,
     PAGE_SIZE, LOGIN_WAIT_SECONDS,
-    LOGIN_URL, DASHBOARD_URL, STUDENT_LIST_URL, STUDENT_GP_URL,
 )
+
+BASE_URL = "https://sdms.udiseplus.gov.in"
+LOGIN_URL = f"{BASE_URL}/p1/v1/login"
 
 CLASS_NAMES = {6: "VI", 7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII"}
 
@@ -32,6 +34,27 @@ BLOOD_GROUP_LABELS = {
 
 
 MAX_WAIT_FOR_ELEMENT = 30
+
+
+def detect_school_id(page):
+    for url in [page.url, page.evaluate("window.location.href")]:
+        m = re.search(r'/school/(\d+)/', url)
+        if m:
+            return m.group(1)
+    sid = page.evaluate("""() => {
+        const hash = window.location.hash || '';
+        const m = hash.match(/\\/school\\/(\\d+)\\//);
+        return m ? m[1] : null;
+    }""")
+    return sid
+
+
+def build_urls(school_id):
+    return {
+        "student_list": f"{BASE_URL}/g1/#/school/{school_id}/viewStudentDetails/cy/{{class_num}}",
+        "student_gp": f"{BASE_URL}/g1/#/school/{school_id}/new-ac/{{class_num}}/{{section_num}}/{{student_id}}?formId=1&formEditFlag=1",
+        "dashboard": f"{BASE_URL}/g1/#/school/{school_id}/schoolDashboard/cy",
+    }
 
 
 def wait(seconds):
@@ -142,15 +165,19 @@ def read_and_fill_field(page):
 
     old_label = BLOOD_GROUP_LABELS.get(field_value, f"Unknown({field_value})")
 
-    if SKIP_IF_ALREADY_SET and field_value != "":
+    if SKIP_IF_ALREADY_SET and field_value != "" and not ALWAYS_SAVE:
         print(f"    ↩ Already set ({old_label}), skipping")
         return "skipped", field_value
 
-    page.evaluate(f"""() => {{
-        const el = document.querySelector('{FIELD_SELECTOR}');
-        el.value = '{FIELD_VALUE}';
-        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-    }}""")
+    if field_value == "" or not SKIP_IF_ALREADY_SET:
+        page.evaluate(f"""() => {{
+            const el = document.querySelector('{FIELD_SELECTOR}');
+            el.value = '{FIELD_VALUE}';
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        }}""")
+        print(f"    → Set {old_label} → {FIELD_LABEL}")
+    else:
+        print(f"    → Keeping existing value ({old_label}), saving anyway")
 
     page.evaluate("""() => {
         const btn = [...document.querySelectorAll('button')].find(
@@ -167,7 +194,7 @@ def read_and_fill_field(page):
             if (close) close.click();
         }""")
         wait(0.5)
-        print(f"    ✅ Saved → {FIELD_LABEL}")
+        print(f"    ✅ Saved")
         return "saved", field_value
     else:
         print(f"    ❌ Unexpected popup: {swal_text or '(no popup appeared)'}")
@@ -181,14 +208,21 @@ def read_and_fill_field(page):
         return "error", field_value
 
 
-def process_class(page, class_num):
-    url = STUDENT_LIST_URL.format(class_num=class_num)
+def navigate_to_class(page, class_num, urls):
+    target_url = urls["student_list"].format(class_num=class_num)
+    page.goto("about:blank")
+    wait(0.5)
+    page.goto(target_url, wait_until="networkidle", timeout=30000)
+    wait(PAGE_LOAD_DELAY)
+
+
+def process_class(page, class_num, urls):
     class_name = CLASS_NAMES.get(class_num, str(class_num))
     print(f"\n{'='*60}")
     print(f"CLASS {class_name} (num={class_num}) — Loading student list")
     print(f"{'='*60}")
 
-    page.goto(url, wait_until="networkidle", timeout=30000)
+    navigate_to_class(page, class_num, urls)
     table_rows = wait_for_table(page)
     if table_rows == 0:
         wait(PAGE_LOAD_DELAY)
@@ -216,10 +250,21 @@ def process_class(page, class_num):
                 const rows = document.querySelectorAll('table tbody tr');
                 if (idx >= rows.length) return null;
                 const cells = rows[idx].querySelectorAll('td');
+                const lastCell = cells[cells.length - 1];
+                let gpDone = false;
+                if (lastCell) {{
+                    for (const el of lastCell.children) {{
+                        if (el.textContent.trim() === 'GP') {{
+                            gpDone = el.classList.contains('submit');
+                            break;
+                        }}
+                    }}
+                }}
                 return {{
                     name: cells[2]?.textContent?.trim() || 'Unknown',
                     pen: cells[1]?.textContent?.trim() || '',
-                    gender: cells[3]?.textContent?.trim() || ''
+                    gender: cells[3]?.textContent?.trim() || '',
+                    gp_done: gpDone
                 }};
             }}""", i)
 
@@ -227,7 +272,17 @@ def process_class(page, class_num):
                 continue
 
             student_num = start + i
-            print(f"\n  [{student_num}/{total}] {student_info['name']} (PEN: {student_info['pen']})")
+            gp_status = "GP ✅" if student_info["gp_done"] else "GP 🔴"
+            print(f"\n  [{student_num}/{total}] {student_info['name']} (PEN: {student_info['pen']}) [{gp_status}]")
+
+            if ONLY_INCOMPLETE and student_info["gp_done"]:
+                print(f"    ↩ GP already green, skipping")
+                stats["skipped"] = stats.get("skipped", 0) + 1
+                student_records.append({
+                    **student_info, "num": student_num,
+                    "result": "skipped_complete", "old_value": None, "error": None
+                })
+                continue
 
             clicked = click_gp_button(page, i)
             if not clicked:
@@ -267,7 +322,8 @@ def process_class(page, class_num):
             current_row_count = wait_for_table(page)
             if current_row_count == 0:
                 print("    ⚠ Student list didn't reload, re-navigating...")
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                list_url = urls["student_list"].format(class_num=class_num)
+                page.goto(list_url, wait_until="networkidle", timeout=30000)
                 wait_for_table(page)
                 for _ in range(page_num - 1):
                     click_next_page(page)
@@ -290,7 +346,7 @@ def process_class(page, class_num):
     return stats, student_records, errors_log
 
 
-def write_class_report(class_num, stats, student_records, errors_log, reports_dir):
+def write_class_report(class_num, stats, student_records, errors_log, reports_dir, school_id=""):
     class_name = CLASS_NAMES.get(class_num, str(class_num))
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     filename = os.path.join(reports_dir, f"class_{class_name}.md")
@@ -304,7 +360,7 @@ def write_class_report(class_num, stats, student_records, errors_log, reports_di
         f"# Class {class_name} — Blood Group Update Report",
         f"",
         f"**Generated:** {timestamp}",
-        f"**School ID:** {SCHOOL_ID}",
+        f"**School ID:** {school_id}",
         f"**Field:** {FIELD_SELECTOR}",
         f"**Value Set:** {FIELD_VALUE} ({FIELD_LABEL})",
         f"",
@@ -368,7 +424,7 @@ def write_class_report(class_num, stats, student_records, errors_log, reports_di
     return filename
 
 
-def write_summary_report(all_class_stats, reports_dir):
+def write_summary_report(all_class_stats, reports_dir, school_id=""):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     filename = os.path.join(reports_dir, "summary.md")
 
@@ -382,7 +438,7 @@ def write_summary_report(all_class_stats, reports_dir):
         f"# UDISE+ Automation — Run Summary",
         f"",
         f"**Generated:** {timestamp}",
-        f"**School ID:** {SCHOOL_ID}",
+        f"**School ID:** {school_id}",
         f"**Field:** {FIELD_SELECTOR} → {FIELD_VALUE} ({FIELD_LABEL})",
         f"",
         f"## Overall Totals",
@@ -441,7 +497,6 @@ def main():
     print("=" * 60)
     print("UDISE+ Student Profile Automation")
     print("=" * 60)
-    print(f"School ID     : {SCHOOL_ID}")
     print(f"Classes       : {[CLASS_NAMES.get(c, c) for c in classes]}")
     print(f"Field         : {FIELD_SELECTOR}")
     print(f"Value to set  : {FIELD_VALUE} ({FIELD_LABEL})")
@@ -459,14 +514,19 @@ def main():
 
         page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
 
-        input("\n👉  Log in, select Academic Year, and reach the dashboard.\n    Then come back here and press ENTER to start...\n")
+        input("\n👉  Log in, select Academic Year, and reach the School Dashboard.\n    Then come back here and press ENTER to start...\n")
 
         print(f"  Current URL: {page.url}")
+        print(f"  JS URL:      {page.evaluate('window.location.href')}")
 
-        if "/schoolDashboard" not in page.url:
-            print("  Navigating to dashboard...")
-            page.goto(DASHBOARD_URL, wait_until="networkidle", timeout=30000)
-            wait(PAGE_LOAD_DELAY)
+        school_id = detect_school_id(page)
+        if not school_id:
+            print("  ⚠ Could not detect School ID from URL.")
+            print("  Tip: Make sure you're on the dashboard (URL contains /school/XXXX/)")
+            school_id = input("  Enter School ID manually: ").strip()
+
+        urls = build_urls(school_id)
+        print(f"  School ID   : {school_id}")
 
         print("✅  Starting automation...\n")
 
@@ -474,14 +534,14 @@ def main():
 
         for class_num in classes:
             try:
-                stats, records, errors = process_class(page, class_num)
+                stats, records, errors = process_class(page, class_num, urls)
                 all_class_stats.append((class_num, stats, records, errors))
-                write_class_report(class_num, stats, records, errors, reports_dir)
+                write_class_report(class_num, stats, records, errors, reports_dir, school_id)
             except Exception as e:
                 print(f"\n❌ Class {class_num} failed: {e}")
                 all_class_stats.append((class_num, {"error": 1}, [], [str(e)]))
 
-        write_summary_report(all_class_stats, reports_dir)
+        write_summary_report(all_class_stats, reports_dir, school_id)
 
         grand = {"saved": 0, "skipped": 0, "error": 0, "field_missing": 0}
         for _, stats, _, _ in all_class_stats:

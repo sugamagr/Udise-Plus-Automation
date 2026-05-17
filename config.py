@@ -4,9 +4,8 @@
 # Edit the values below before running the script.
 # ============================================================
 
-# School ID as it appears in the UDISE+ URL
-# Example URL: https://sdms.udiseplus.gov.in/g1/#/school/2184637/...
-SCHOOL_ID = "2184637"
+# School ID is auto-detected from the URL after you log in.
+# No need to set it here!
 
 # Which classes to process (use the number that appears in the URL)
 # Class VI=6, VII=7, VIII=8, IX=9, X=10, XI=11, XII=12
@@ -40,6 +39,14 @@ FIELD_LABEL = "Under Investigation - Result will be updated soon"
 # If True, skip students whose field already has a non-empty value
 SKIP_IF_ALREADY_SET = True
 
+# If True, click Save on every student even if the field was already set
+# (useful when UDISE+ needs a Save click to mark the profile as complete)
+ALWAYS_SAVE = True
+
+# If True, skip students whose GP button is green (already saved).
+# Checks the button CSS class (submit=done, incomplete=needs work).
+ONLY_INCOMPLETE = True
+
 # ---------- TIMING (seconds) ----------
 # Delay after page loads (student list or GP form)
 PAGE_LOAD_DELAY = 3
@@ -62,9 +69,4 @@ PAGE_SIZE = 50
 # Set how many seconds to wait for manual login.
 LOGIN_WAIT_SECONDS = 120
 
-# ---------- BASE URL ----------
-BASE_URL = "https://sdms.udiseplus.gov.in"
-STUDENT_LIST_URL = f"{BASE_URL}/g1/#/school/{SCHOOL_ID}/viewStudentDetails/cy/{{class_num}}"
-STUDENT_GP_URL = f"{BASE_URL}/g1/#/school/{SCHOOL_ID}/new-ac/{{class_num}}/{{section_num}}/{{student_id}}?formId=1&formEditFlag=1"
-LOGIN_URL = f"{BASE_URL}/p1/v1/login"
-DASHBOARD_URL = f"{BASE_URL}/g1/#/school/{SCHOOL_ID}/schoolDashboard/cy"
+
