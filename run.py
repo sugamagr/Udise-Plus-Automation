@@ -130,7 +130,7 @@ def parse_args():
     parser.add_argument(
         "--classes", nargs="+", metavar="N",
         help="Class numbers to process (e.g. --classes 6 7 10, or --classes -3 -2 for Nursery/LKG). "
-             "Use 'auto' to detect from portal. If omitted, uses CLASSES_TO_PROCESS from config.py"
+             "If omitted, auto-detects all classes from the portal."
     )
     return parser.parse_args()
 
@@ -523,16 +523,15 @@ def write_summary_report(all_class_stats, reports_dir, school_id=""):
 
 def main():
     args = parse_args()
-    auto_detect_classes = False
 
     if args.classes:
-        if args.classes == ["auto"]:
-            auto_detect_classes = True
-            classes = []
-        else:
-            classes = [int(c) for c in args.classes]
+        # User specified classes explicitly — use those, no auto-detect
+        classes = [int(c) for c in args.classes]
+        auto_detect_classes = False
     else:
-        classes = CLASSES_TO_PROCESS
+        # No --classes flag — auto-detect from portal (default behavior)
+        classes = []
+        auto_detect_classes = True
 
     print("=" * 60)
     print("UDISE+ Student Profile Automation")
@@ -571,10 +570,9 @@ def main():
         urls = build_urls(school_id)
         print(f"  School ID   : {school_id}")
 
-        if auto_detect_classes or not classes:
+        if auto_detect_classes:
             print("\n  🔍 Auto-detecting classes from portal...")
-            any_class = CLASSES_TO_PROCESS[0] if CLASSES_TO_PROCESS else 1
-            navigate_to_class(page, any_class, urls)
+            navigate_to_class(page, 1, urls)
             wait_for_table(page, timeout=15)
 
             detected = detect_classes(page)
@@ -585,7 +583,7 @@ def main():
                         CLASS_NAMES[c["value"]] = c["label"]
                 print(f"  ✅ Found {len(classes)} classes: {[CLASS_NAMES.get(c, c) for c in classes]}")
             else:
-                print("  ⚠ Could not detect classes. Using defaults from config.")
+                print("  ⚠ Could not detect classes. Falling back to config defaults.")
                 classes = CLASSES_TO_PROCESS
 
         print("\n✅  Starting automation...\n")
