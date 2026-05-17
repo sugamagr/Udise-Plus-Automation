@@ -112,20 +112,46 @@ udise-automation/
 
 ### First Time Setup (once only)
 
+**Mac / Linux:**
 ```bash
-cd "/Users/apple/Desktop/Talos QC/udise-automation"
+git clone https://github.com/sugamagr/Udise-Plus-Automation.git
+cd Udise-Plus-Automation
 python3 -m venv venv
 source venv/bin/activate
 pip install playwright
 playwright install chromium
 ```
 
+**Windows (Command Prompt):**
+```cmd
+git clone https://github.com/sugamagr/Udise-Plus-Automation.git
+cd Udise-Plus-Automation
+python -m venv venv
+venv\Scripts\activate
+pip install playwright
+playwright install chromium
+```
+
 ### Every Time You Want to Run
 
+**Mac / Linux:**
 ```bash
-cd "/Users/apple/Desktop/Talos QC/udise-automation"
+cd Udise-Plus-Automation
 source venv/bin/activate
 python -u run.py
+```
+
+**Windows:**
+```cmd
+cd Udise-Plus-Automation
+venv\Scripts\activate
+python -u run.py
+```
+
+### Run Only Specific Classes
+
+```bash
+python -u run.py --classes 6 10 12
 ```
 
 Then:
