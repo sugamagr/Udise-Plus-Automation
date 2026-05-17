@@ -277,7 +277,7 @@ def process_class(page, class_num, urls):
 
             if ONLY_INCOMPLETE and student_info["gp_done"]:
                 print(f"    ↩ GP already green, skipping")
-                stats["skipped"] = stats.get("skipped", 0) + 1
+                stats["gp_done"] = stats.get("gp_done", 0) + 1
                 student_records.append({
                     **student_info, "num": student_num,
                     "result": "skipped_complete", "old_value": None, "error": None
@@ -356,6 +356,8 @@ def write_class_report(class_num, stats, student_records, errors_log, reports_di
     error_count = stats.get("error", 0)
     total = len(student_records)
 
+    gp_done_count = sum(1 for r in student_records if r["result"] == "skipped_complete")
+
     lines = [
         f"# Class {class_name} — Blood Group Update Report",
         f"",
@@ -371,6 +373,7 @@ def write_class_report(class_num, stats, student_records, errors_log, reports_di
         f"| Total Students | {total} |",
         f"| ✅ Updated | {saved_count} |",
         f"| ↩ Skipped (already set) | {skipped_count} |",
+        f"| ✅ GP Already Done | {gp_done_count} |",
         f"| ❌ Errors | {error_count} |",
         f"",
         f"## Student Details",
@@ -390,6 +393,9 @@ def write_class_report(class_num, stats, student_records, errors_log, reports_di
         elif rec["result"] == "skipped":
             action = "↩ Skipped"
             new_val = old_label + " (kept)"
+        elif rec["result"] == "skipped_complete":
+            action = "✅ GP Done"
+            new_val = "—"
         elif rec["result"] == "field_missing":
             action = "⚠ Field N/A"
             new_val = "—"
@@ -428,9 +434,9 @@ def write_summary_report(all_class_stats, reports_dir, school_id=""):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     filename = os.path.join(reports_dir, "summary.md")
 
-    grand = {"saved": 0, "skipped": 0, "error": 0, "field_missing": 0, "total": 0}
+    grand = {"saved": 0, "skipped": 0, "gp_done": 0, "error": 0, "field_missing": 0, "total": 0}
     for class_num, stats, _, _ in all_class_stats:
-        for k in ["saved", "skipped", "error", "field_missing"]:
+        for k in ["saved", "skipped", "gp_done", "error", "field_missing"]:
             grand[k] += stats.get(k, 0)
         grand["total"] += sum(stats.values())
 
@@ -448,13 +454,14 @@ def write_summary_report(all_class_stats, reports_dir, school_id=""):
         f"| Total Students Processed | {grand['total']} |",
         f"| ✅ Updated | {grand['saved']} |",
         f"| ↩ Skipped (already set) | {grand['skipped']} |",
+        f"| ✅ GP Already Done | {grand['gp_done']} |",
         f"| ❌ Errors | {grand['error']} |",
         f"| ⚠ Field Not Found | {grand['field_missing']} |",
         f"",
         f"## Per-Class Breakdown",
         f"",
-        f"| Class | Students | Updated | Skipped | Errors | Report |",
-        f"|-------|----------|---------|---------|--------|--------|",
+        f"| Class | Students | Updated | Skipped | GP Done | Errors | Report |",
+        f"|-------|----------|---------|---------|---------|--------|--------|",
     ]
 
     for class_num, stats, _, _ in all_class_stats:
@@ -462,7 +469,7 @@ def write_summary_report(all_class_stats, reports_dir, school_id=""):
         total = sum(stats.values())
         lines.append(
             f"| {class_name} | {total} | {stats.get('saved',0)} "
-            f"| {stats.get('skipped',0)} | {stats.get('error',0)} "
+            f"| {stats.get('skipped',0)} | {stats.get('gp_done',0)} | {stats.get('error',0)} "
             f"| [class_{class_name}.md](class_{class_name}.md) |"
         )
 
@@ -543,9 +550,9 @@ def main():
 
         write_summary_report(all_class_stats, reports_dir, school_id)
 
-        grand = {"saved": 0, "skipped": 0, "error": 0, "field_missing": 0}
+        grand = {"saved": 0, "skipped": 0, "gp_done": 0, "error": 0, "field_missing": 0}
         for _, stats, _, _ in all_class_stats:
-            for k in ["saved", "skipped", "error", "field_missing"]:
+            for k in ["saved", "skipped", "gp_done", "error", "field_missing"]:
                 grand[k] += stats.get(k, 0)
 
         print("\n" + "=" * 60)
@@ -553,6 +560,7 @@ def main():
         print("=" * 60)
         print(f"  Saved       : {grand['saved']}")
         print(f"  Skipped     : {grand['skipped']}")
+        print(f"  GP Done     : {grand['gp_done']}")
         print(f"  Errors      : {grand['error']}")
         print(f"  Field N/A   : {grand['field_missing']}")
         print(f"  Reports     : {reports_dir}")
