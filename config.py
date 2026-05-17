@@ -8,7 +8,15 @@
 # No need to set it here!
 
 # Which classes to process (use the number that appears in the URL)
-# Class VI=6, VII=7, VIII=8, IX=9, X=10, XI=11, XII=12
+#
+# Full mapping (negative numbers for pre-primary):
+#   -3 = Nursery/KG/PP3    1 = I       6 = VI      11 = XI
+#   -2 = LKG/KG1/PP2       2 = II      7 = VII     12 = XII
+#   -1 = UKG/KG2/PP1       3 = III     8 = VIII
+#                           4 = IV      9 = IX
+#                           5 = V      10 = X
+#
+# Tip: Use --classes auto on the command line to auto-detect from portal
 CLASSES_TO_PROCESS = [6, 7, 8, 9, 10, 11, 12]
 
 # Section number (1 = Section A, which is the default/only section for most schools)

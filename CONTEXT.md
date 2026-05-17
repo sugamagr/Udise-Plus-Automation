@@ -96,19 +96,34 @@ Academic Year: /academic-choice
 ```
 
 ### Class Number Mapping
-| Class | URL Number |
-|-------|-----------|
-| VI    | 6         |
-| VII   | 7         |
-| VIII  | 8         |
-| IX    | 9         |
-| X     | 10        |
-| XI    | 11        |
-| XII   | 12        |
+**Pre-primary classes use negative numbers. There is no Class 0.**
+
+| Class | URL Number | Notes |
+|-------|-----------|-------|
+| Nursery/KG/PP3 | **-3** | Pre-primary |
+| LKG/KG1/PP2 | **-2** | Pre-primary |
+| UKG/KG2/PP1 | **-1** | Pre-primary |
+| I | 1 | |
+| II | 2 | |
+| III | 3 | |
+| IV | 4 | |
+| V | 5 | |
+| VI | 6 | |
+| VII | 7 | |
+| VIII | 8 | |
+| IX | 9 | |
+| X | 10 | |
+| XI | 11 | |
+| XII | 12 | |
+
+Not all schools have all classes. Use `--classes auto` or `detect_classes(page)` to discover
+which classes are available for a given school.
 
 ### Section Number
+- Section "All" = `-1`
 - Section A = `1` (default, most schools have only one section)
 - Section B = `2`, etc.
+- Some schools (e.g., primary schools) have multiple sections per class
 
 ### Student ID
 - Each student has a unique numeric ID used in URLs
@@ -597,17 +612,19 @@ If the table doesn't reload after `go_back()`, the script:
 
 ### Files
 ```
-/Users/apple/Documents/Udise-Plus-Automation/
-├── run.py              # Main automation script (574 lines)
-├── config.py           # All configuration (72 lines)
+Udise-Plus-Automation/
+├── run.py              # Main automation script (~627 lines)
+├── config.py           # All configuration (~80 lines)
 ├── requirements.txt    # playwright dependency
-├── README.md           # User documentation
-├── CONTEXT.md          # This file
+├── README.md           # User documentation with Mac/Win/PowerShell commands
+├── CONTEXT.md          # This file — full technical reference
 ├── .gitignore
-├── venv/               # Python virtual environment
-└── reports/            # Generated per-run (timestamped subdirectories)
+├── venv/               # Python virtual environment (created during setup)
+└── reports/            # Auto-generated per-run (timestamped subdirectories)
     └── 2025-06-XX_HH-MM-SS/
-        ├── summary.md
+        ├── summary.md              # Overall totals + per-class breakdown table
+        ├── class_Nursery_KG_PP3.md # Every student in Nursery with action taken
+        ├── class_LKG_KG1_PP2.md
         ├── class_VI.md
         ├── class_VII.md
         └── ...
@@ -617,58 +634,80 @@ If the table doesn't reload after `go_back()`, the script:
 
 | Function | Purpose |
 |----------|---------|
-| `detect_school_id(page)` | Extract school ID from current URL via regex |
-| `build_urls(school_id)` | Return dict of URL templates for student_list, student_gp, dashboard |
+| `detect_school_id(page)` | Extract school ID from current URL via regex (checks `page.url`, `window.location.href`, `window.location.hash`) |
+| `detect_classes(page)` | Read class dropdown on student list page → returns list of `{value, label}` for available classes |
+| `build_urls(school_id)` | Return dict of URL templates for `student_list`, `student_gp`, `dashboard` |
 | `wait_for_table(page, timeout)` | Poll for `table tbody tr` rows, up to timeout seconds |
 | `wait_for_field(page, selector, timeout)` | Poll for a form field element to exist |
-| `wait_for_swal(page, timeout)` | Poll for SweetAlert2 popup text |
-| `navigate_to_class(page, class_num, urls)` | about:blank bounce → student list URL |
-| `get_pagination_info(page)` | Parse "X – Y of Z" from paginator |
-| `click_next_page(page)` | Click next page button if not disabled |
-| `click_gp_button(page, row_index)` | Find and click GP button in specific table row |
-| `read_and_fill_field(page)` | Read current field value, set new value, click Save, handle popup |
-| `process_class(page, class_num, urls)` | Full class processing: paginate, iterate students, fill fields |
-| `write_class_report(...)` | Generate per-class markdown report |
-| `write_summary_report(...)` | Generate overall summary report |
-| `main()` | Entry point: parse args, launch browser, login flow, iterate classes |
+| `wait_for_swal(page, timeout)` | Poll for SweetAlert2 popup text (every 0.5s) |
+| `navigate_to_class(page, class_num, urls)` | about:blank bounce → student list URL (forces Angular full reload) |
+| `get_pagination_info(page)` | Parse "X – Y of Z" from `.mat-mdc-paginator-range-label` |
+| `click_next_page(page)` | Click `button[aria-label="Next page"]` if not disabled |
+| `click_gp_button(page, row_index)` | Find and click GP button (by text content "GP") in specific table row |
+| `read_and_fill_field(page)` | Read current field value, set new value via JS + change event, click Save, handle popup |
+| `process_class(page, class_num, urls)` | Full class processing: paginate, iterate students, check GP color, fill fields |
+| `write_class_report(...)` | Generate per-class markdown report (summary table + every student row) |
+| `write_summary_report(...)` | Generate overall summary report (grand totals + per-class breakdown + all errors) |
+| `parse_args()` | Parse `--classes` CLI arg (supports integers, negative numbers, and "auto") |
+| `main()` | Entry point: parse args, launch browser, login flow, auto-detect, iterate classes, generate reports |
 
 ### Flow of main()
 ```
-1. Parse CLI args (--classes flag)
-2. Launch Chromium (headed, slow_mo=200)
+1. Parse CLI args (--classes flag: specific numbers, "auto", or omit for config default)
+2. Launch Chromium (headed, slow_mo=200, viewport 1280x900)
 3. Navigate to login URL
-4. input() — wait for user to log in and press ENTER
-5. Detect school ID from URL
-6. Build URL templates
-7. For each class:
-   a. navigate_to_class() — about:blank bounce
-   b. process_class() — iterate students with pagination
-   c. write_class_report()
-8. write_summary_report()
-9. Print final stats
-10. input() — wait for user to close browser
+4. input() — wait for user to log in, select academic year, reach dashboard, press ENTER
+5. Detect school ID from URL (3 sources checked, fallback to manual input)
+6. Build URL templates with school_id
+7. If --classes auto: navigate to any student list page, call detect_classes(), populate CLASS_NAMES
+8. Create timestamped reports directory
+9. For each class:
+   a. navigate_to_class() — about:blank bounce → student list URL
+   b. process_class() — iterate students with pagination, check GP color, fill fields
+   c. write_class_report() — per-class markdown with every student's action
+10. write_summary_report() — grand totals + per-class table + all errors
+11. Print final stats to terminal
+12. input() — wait for user to close browser
 ```
 
 ### How process_class() Works (inner loop)
 ```
-For each page of students:
-    Parse pagination (start, end, total)
+For each page of students (50 per page, fixed by UDISE+):
+    Parse pagination (start, end, total) from mat-paginator
     For each row in table:
-        Extract student info (name, PEN, gender, gp_done)
-        If ONLY_INCOMPLETE and gp_done → skip
-        Click GP button (by row index)
-        Wait for GP form to load
+        Extract student info (name, PEN, gender, gp_done from GP button CSS class)
+        If ONLY_INCOMPLETE and gp_done (button has class 'submit') → skip, log as "GP Already Done"
+        Click GP button (by row index, text match 'GP')
+        Wait for GP form to load (wait_for_field with FIELD_SELECTOR)
         read_and_fill_field():
             Check current value
-            If empty → set value via JS + dispatch change event
-            Click Save
-            Wait for SweetAlert2 popup
-            Close popup
-        go_back() to student list
-        Wait for table to reload
-        If table missing → re-navigate + re-paginate to current page
-    Click next page (if more pages)
+            If SKIP_IF_ALREADY_SET and value non-empty and not ALWAYS_SAVE → skip
+            If empty or not SKIP_IF_ALREADY_SET → set value via JS + dispatch change event
+            If ALWAYS_SAVE and value already set → save anyway (marks profile complete)
+            Click Save button (found by text content "Save")
+            Wait for SweetAlert2 popup (wait_for_swal, polls every 0.5s)
+            Check for "successfully" in popup text
+            Close popup (.swal2-close)
+        go_back() to student list (wait_until="networkidle")
+        Wait for table to reload (wait_for_table)
+        If table missing → re-navigate to student list URL + re-paginate to current page
+    Click next page (if end < total)
 ```
+
+### Report Generation Details
+
+**Class Report (`write_class_report`):**
+- Header: class name, timestamp, school ID, field selector, value
+- Summary table: Total, Updated, Skipped (already set), GP Already Done, Errors
+- Student details table: #, Name, PEN, Gender, Action, Previous Value, New Value
+- Action values: "Updated", "Skipped", "GP Done", "Field N/A", "Error"
+- Errors section: numbered list of any errors for that class
+
+**Summary Report (`write_summary_report`):**
+- Header: timestamp, school ID, field + value
+- Grand totals: all stats summed across classes
+- Per-class breakdown table: Class, Students, Updated, Skipped, GP Done, Errors, link to class report
+- All errors: combined across classes with class prefix
 
 ### How read_and_fill_field() Sets a Dropdown Value
 ```javascript
@@ -693,12 +732,21 @@ el.dispatchEvent(new Event('change', { bubbles: true }));
 ### config.py — Full Reference
 
 ```python
-# Classes to process (URL numbers)
+# ---------- CLASSES ----------
+# Which classes to process (use URL numbers, see class mapping below)
+# Full mapping (negative numbers for pre-primary):
+#   -3 = Nursery/KG/PP3    1 = I       6 = VI      11 = XI
+#   -2 = LKG/KG1/PP2       2 = II      7 = VII     12 = XII
+#   -1 = UKG/KG2/PP1       3 = III     8 = VIII
+#                           4 = IV      9 = IX
+#                           5 = V      10 = X
+# Tip: Use --classes auto on the command line to auto-detect from portal
 CLASSES_TO_PROCESS = [6, 7, 8, 9, 10, 11, 12]
 
-# Section (1 = A)
+# Section (1 = A, 2 = B)
 SECTION_NUM = 1
 
+# ---------- FIELD TO SET ----------
 # Target field CSS selector
 FIELD_SELECTOR = "#bloodGroup"
 
@@ -708,33 +756,75 @@ FIELD_VALUE = "9"
 # Human-readable label for logging
 FIELD_LABEL = "Under Investigation - Result will be updated soon"
 
+# ---------- SKIP LOGIC ----------
 # Skip if field already has a non-empty value
 SKIP_IF_ALREADY_SET = True
 
-# Save even if field was already set (marks profile complete)
+# Save even if field was already set (marks profile complete in UDISE+)
 ALWAYS_SAVE = True
 
-# Skip students whose GP button is green
+# Skip students whose GP button is green (already saved/complete)
 ONLY_INCOMPLETE = True
 
-# Timing
-PAGE_LOAD_DELAY = 3      # After page navigation
-SAVE_DELAY = 3            # After Save click (unused now — wait_for_swal replaces this)
-BETWEEN_STUDENTS_DELAY = 1 # Between students
-BACK_NAV_DELAY = 2        # After go_back()
+# ---------- TIMING (seconds) ----------
+PAGE_LOAD_DELAY = 3           # After page navigation
+SAVE_DELAY = 3                # After Save click (fallback — wait_for_swal is primary)
+BETWEEN_STUDENTS_DELAY = 1    # Breathing room between students
+BACK_NAV_DELAY = 2            # After go_back() to student list
 
-# Pagination (fixed by UDISE+)
-PAGE_SIZE = 50
+# ---------- PAGINATION ----------
+PAGE_SIZE = 50                # Fixed by UDISE+ (cannot be changed)
 
-# Login wait (unused now — replaced by input() prompt)
-LOGIN_WAIT_SECONDS = 120
+# ---------- LOGIN ----------
+LOGIN_WAIT_SECONDS = 120      # Legacy (replaced by input() prompt)
 ```
+
+### Skip Logic Interaction
+
+| ONLY_INCOMPLETE | SKIP_IF_ALREADY_SET | ALWAYS_SAVE | Behavior |
+|:-:|:-:|:-:|---|
+| True | True | True | **Default/Fastest.** Green GP → skip instantly. Red GP: empty → set + save, non-empty → save anyway. |
+| True | True | False | Green GP → skip. Red GP: empty → set + save, non-empty → skip entirely. |
+| False | True | True | Check every student's GP form. Empty → set + save. Non-empty → save anyway. |
+| False | False | — | Set value on ALL students regardless of current value. |
 
 ### CLI Arguments
+
 ```bash
-python -u run.py                    # Process all classes from config
-python -u run.py --classes 6 10 12  # Process only Class VI, X, XII
+# Process classes from config.py (default)
+python -u run.py
+
+# Process specific classes (standard)
+python -u run.py --classes 6 10 12
+
+# Process pre-primary classes (negative numbers)
+python -u run.py --classes -3 -2 -1
+
+# Mix pre-primary and standard
+python -u run.py --classes -3 -2 -1 1 2 3 6
+
+# Auto-detect all classes from portal dropdown
+python -u run.py --classes auto
+
+# Single class
+python -u run.py --classes 7
 ```
+
+**Platform notes:**
+- Mac/Linux: All forms work as-is
+- Windows CMD: All forms work as-is
+- Windows PowerShell: For negative numbers, use `--` separator: `python -u run.py --classes -- -3 -2 -1`
+
+### Auto-Detect Classes (`--classes auto`)
+
+When `--classes auto` is used:
+1. Script navigates to the student list page for the first class in `CLASSES_TO_PROCESS` (or class 1)
+2. Reads the class `<select>` dropdown options (excludes Language dropdown)
+3. Returns list of `{value, label}` for all available classes
+4. Populates `CLASS_NAMES` dict with any classes not in the hardcoded mapping
+5. Processes all detected classes in order
+
+This is useful when you don't know which classes a school offers (e.g., primary vs. secondary schools).
 
 ---
 
@@ -891,9 +981,11 @@ target.click();
 
 ---
 
-## 20. School-Specific Data (Test School)
+## 20. School-Specific Data (Test Schools)
 
-This automation was developed and tested against:
+This automation was developed and tested against two schools:
+
+### School 1: NAVODIT PUBLIC INTER COLLEGE (Secondary)
 
 | Property | Value |
 |----------|-------|
@@ -906,7 +998,6 @@ This automation was developed and tested against:
 | User Account | JOLLY AGRAWAL (SCHOOL USER) |
 | State | Uttar Pradesh (code 09) |
 
-### Student Counts Per Class (as of June 2025)
 | Class | Number | Students |
 |-------|--------|----------|
 | VI    | 6      | 10       |
@@ -917,10 +1008,39 @@ This automation was developed and tested against:
 | XI    | 11     | 154      |
 | XII   | 12     | 145      |
 
+### School 2: NAVODIT PUBLIC SCHOOL KHUDAGANJ (Primary + Upper Primary)
+
+| Property | Value |
+|----------|-------|
+| School Name | NAVODIT PUBLIC SCHOOL KHUDAGANJ |
+| UDISE Code | 09220905203 |
+| Internal School ID | 2107557 |
+| Type | Primary with Upper Primary |
+| Classes | Nursery through VIII |
+| Total Students | 760 |
+| User Account | MUKESH KUMAR GANGWAR (SCHOOL USER) |
+| Sections | Some classes have A and B sections |
+
+| Class | Number | Students |
+|-------|--------|----------|
+| Nursery | -3   | 21       |
+| LKG     | -2   | 52       |
+| UKG     | -1   | 126      |
+| I       | 1    | 105      |
+| II      | 2    | 118      |
+| III     | 3    | 111      |
+| IV      | 4    | 65       |
+| V       | 5    | 80       |
+| VI      | 6    | 59       |
+| VII     | 7    | 7        |
+| VIII    | 8    | 16       |
+
+> This school was used to discover and test pre-primary class handling (negative class numbers) and the `--classes auto` feature.
+
 ### Students Tested During Development
-- ANANYA CHAUHAN (Class VI) — Blood Group set to "Under Investigation"
-- DEEPAK GANGWAR (Class VI) — Blood Group set to "Under Investigation"
-- AAMAN ALI (Class VII) — Blood Group set to "Under Investigation"
+- ANANYA CHAUHAN (School 1, Class VI) — Blood Group set to "Under Investigation"
+- DEEPAK GANGWAR (School 1, Class VI) — Blood Group set to "Under Investigation"
+- AAMAN ALI (School 1, Class VII) — Blood Group set to "Under Investigation"
 
 ---
 
@@ -1099,4 +1219,5 @@ python -u run.py  # -u flag ensures print() output appears immediately
 
 *Last updated: June 2025*
 *Portal version: UDISE+ SDMS (sdms.udiseplus.gov.in)*
-*Discovered via interactive Playwright MCP session*
+*Discovered via interactive Playwright MCP sessions on two schools (secondary + primary)*
+*Features: auto-detect school ID, auto-detect classes, GP button color check, markdown reports*

@@ -23,7 +23,11 @@ from config import (
 BASE_URL = "https://sdms.udiseplus.gov.in"
 LOGIN_URL = f"{BASE_URL}/p1/v1/login"
 
-CLASS_NAMES = {6: "VI", 7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII"}
+CLASS_NAMES = {
+    -3: "Nursery/KG/PP3", -2: "LKG/KG1/PP2", -1: "UKG/KG2/PP1",
+    1: "I", 2: "II", 3: "III", 4: "IV", 5: "V",
+    6: "VI", 7: "VII", 8: "VIII", 9: "IX", 10: "X", 11: "XI", 12: "XII",
+}
 
 BLOOD_GROUP_LABELS = {
     "": "Empty",
@@ -47,6 +51,26 @@ def detect_school_id(page):
         return m ? m[1] : null;
     }""")
     return sid
+
+
+def detect_classes(page):
+    """Read the class dropdown on the student list page to discover available classes.
+    Returns list of (value, label) tuples, e.g. [(-3, "Nursery/KG/PP3"), (1, "I"), ...]
+    """
+    result = page.evaluate("""() => {
+        const selects = document.querySelectorAll('select:not(#Language)');
+        for (const sel of selects) {
+            const opts = [...sel.options];
+            // The class dropdown has numeric values like -3, -2, 1, 2 ... 12
+            // and labels like "Nursery/KG/PP3", "I", "VI", etc.
+            const hasClassLike = opts.some(o => /^-?\\d+$/.test(o.value) && o.text.trim().length > 0);
+            if (hasClassLike && opts.length >= 2) {
+                return opts.map(o => ({ value: parseInt(o.value), label: o.text.trim() }));
+            }
+        }
+        return null;
+    }""")
+    return result
 
 
 def build_urls(school_id):
@@ -104,9 +128,9 @@ def wait_for_swal(page, timeout=MAX_WAIT_FOR_ELEMENT):
 def parse_args():
     parser = argparse.ArgumentParser(description="UDISE+ Student Profile Automation")
     parser.add_argument(
-        "--classes", nargs="+", type=int, metavar="N",
-        help="Specific class numbers to process (e.g. --classes 6 7 10). "
-             "If omitted, uses CLASSES_TO_PROCESS from config.py"
+        "--classes", nargs="+", metavar="N",
+        help="Class numbers to process (e.g. --classes 6 7 10, or --classes -3 -2 for Nursery/LKG). "
+             "Use 'auto' to detect from portal. If omitted, uses CLASSES_TO_PROCESS from config.py"
     )
     return parser.parse_args()
 
@@ -499,12 +523,24 @@ def write_summary_report(all_class_stats, reports_dir, school_id=""):
 
 def main():
     args = parse_args()
-    classes = args.classes if args.classes else CLASSES_TO_PROCESS
+    auto_detect_classes = False
+
+    if args.classes:
+        if args.classes == ["auto"]:
+            auto_detect_classes = True
+            classes = []
+        else:
+            classes = [int(c) for c in args.classes]
+    else:
+        classes = CLASSES_TO_PROCESS
 
     print("=" * 60)
     print("UDISE+ Student Profile Automation")
     print("=" * 60)
-    print(f"Classes       : {[CLASS_NAMES.get(c, c) for c in classes]}")
+    if not auto_detect_classes:
+        print(f"Classes       : {[CLASS_NAMES.get(c, c) for c in classes]}")
+    else:
+        print(f"Classes       : auto-detect from portal")
     print(f"Field         : {FIELD_SELECTOR}")
     print(f"Value to set  : {FIELD_VALUE} ({FIELD_LABEL})")
     print(f"Skip if set   : {SKIP_IF_ALREADY_SET}")
@@ -535,7 +571,24 @@ def main():
         urls = build_urls(school_id)
         print(f"  School ID   : {school_id}")
 
-        print("✅  Starting automation...\n")
+        if auto_detect_classes or not classes:
+            print("\n  🔍 Auto-detecting classes from portal...")
+            any_class = CLASSES_TO_PROCESS[0] if CLASSES_TO_PROCESS else 1
+            navigate_to_class(page, any_class, urls)
+            wait_for_table(page, timeout=15)
+
+            detected = detect_classes(page)
+            if detected:
+                classes = [c["value"] for c in detected]
+                for c in detected:
+                    if c["value"] not in CLASS_NAMES:
+                        CLASS_NAMES[c["value"]] = c["label"]
+                print(f"  ✅ Found {len(classes)} classes: {[CLASS_NAMES.get(c, c) for c in classes]}")
+            else:
+                print("  ⚠ Could not detect classes. Using defaults from config.")
+                classes = CLASSES_TO_PROCESS
+
+        print("\n✅  Starting automation...\n")
 
         all_class_stats = []
 
